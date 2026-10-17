@@ -30,4 +30,10 @@
 ## Progress
 - Step 1-5 implemented (sessions module + attendance tracking).
 
+## Upstream Issue Fixes
+- [x] [BA-053](https://github.com/BlockDash-Studios/RustAcademy/issues/966): reject self-follow requests at the service boundary with a clear error; existing guard and regression test satisfy the criteria.
+- [x] [BA-083](https://github.com/BlockDash-Studios/RustAcademy/issues/996): order XP leaderboard rows by total XP descending, then user ID ascending; cover tied scores.
+- [x] [BA-084](https://github.com/BlockDash-Studios/RustAcademy/issues/997): reject XP awards and total calculations that exceed the safe integer range.
+- [x] [BA-085](https://github.com/BlockDash-Studios/RustAcademy/issues/998): reject missing or unsupported XP event source values before publishing.
+
 

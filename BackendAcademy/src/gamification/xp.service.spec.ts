@@ -1,8 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
 import { XpController, XP_HISTORY_DEFAULT_LIMIT, XP_HISTORY_MAX_LIMIT } from './xp.controller';
-import { XpController } from './xp.controller';
+import { PublishXpEventDto, XP_EVENT_SOURCES } from './dto/publish-xp-event.dto';
 import { XpService } from './xp.service';
+import { MAX_XP_BALANCE, XpLedgerEntry } from './xp.types';
 
 describe('XpService', () => {
   it('awards an event once when the event is replayed', () => {
@@ -21,7 +22,6 @@ describe('XpService', () => {
     service.onModuleDestroy();
   });
 
-  it('applies distinct valid events normally', () => {
   it('normalizes an event time with a non-UTC offset to UTC', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
@@ -48,7 +48,6 @@ describe('XpService', () => {
     service.onModuleDestroy();
   });
 
-  it('ignores replayed event IDs but still applies new ones', () => {
   it('defaults a missing event time to a UTC timestamp', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
@@ -63,7 +62,6 @@ describe('XpService', () => {
     expect(service.getLedger('user-1')).toHaveLength(2);
     expect(service.getTotals('user-1').totalXp).toBe(20);
 
-    service.onModuleDestroy();
     bus.publish({ eventId: 'evt-default', userId: 'user-default', type: 'task.passed' });
 
     const [award] = service.getLedger('user-default');
@@ -71,6 +69,59 @@ describe('XpService', () => {
     expect(award.occurredAt).toBe(new Date(award.occurredAt).toISOString());
 
     service.onModuleDestroy();
+  });
+
+  it('orders leaderboard ties by user ID ascending', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
+    bus.publish({ eventId: 'evt-z', userId: 'user-z', type: 'task.passed' });
+    bus.publish({ eventId: 'evt-a', userId: 'user-a', type: 'task.passed' });
+
+    expect(service.getLeaderboard()).toEqual([
+      { userId: 'user-a', totalXp: 10 },
+      { userId: 'user-z', totalXp: 10 },
+    ]);
+
+    service.onModuleDestroy();
+  });
+
+  it('rejects an award that would exceed the maximum safe XP balance', () => {
+    const service = new XpService(new DomainEventBus());
+    const ledger = Reflect.get(service, 'ledger') as Map<string, XpLedgerEntry>;
+    ledger.set('seed', {
+      eventId: 'seed',
+      userId: 'user-1',
+      type: 'course.completed',
+      points: MAX_XP_BALANCE - 5,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      awardedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(() =>
+      service.award({ eventId: 'overflow', userId: 'user-1', type: 'task.passed' }),
+    ).toThrow(RangeError);
+    expect(service.getLedger('user-1')).toHaveLength(1);
+    expect(service.getBalance('user-1')).toBe(MAX_XP_BALANCE - 5);
+  });
+
+  it('rejects unsafe totals when reading the ledger', () => {
+    const service = new XpService(new DomainEventBus());
+    const ledger = Reflect.get(service, 'ledger') as Map<string, XpLedgerEntry>;
+    const entry = {
+      eventId: 'seed',
+      userId: 'user-1',
+      type: 'course.completed' as const,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      awardedAt: '2026-01-01T00:00:00.000Z',
+    };
+    ledger.set('first', { ...entry, points: MAX_XP_BALANCE });
+    ledger.set('second', { ...entry, eventId: 'second', points: 1 });
+
+    expect(() => service.getTotals('user-1')).toThrow(RangeError);
+  });
+
   describe('XP award amount validation', () => {
     let bus: DomainEventBus;
     let service: XpService;
@@ -92,7 +143,7 @@ describe('XpService', () => {
       ['course.completed', 100],
     ] as const)('accepts configured award %s = %i XP', (type, amount) => {
       expect(
-        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }),
+        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, source: type, amount }),
       ).toMatchObject({ accepted: true });
       expect(service.getBalance('user-1')).toBe(amount);
     });
@@ -104,8 +155,49 @@ describe('XpService', () => {
       ['amount that conflicts with event policy', 'streak.day', 10],
     ] as const)('rejects %s', (_description, type, amount) => {
       expect(() =>
-        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }),
+        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, source: type, amount }),
       ).toThrow(BadRequestException);
+      expect(service.getBalance('user-1')).toBe(0);
+    });
+  });
+
+  describe('XP event source validation', () => {
+    let bus: DomainEventBus;
+    let service: XpService;
+    let controller: XpController;
+
+    beforeEach(() => {
+      bus = new DomainEventBus();
+      service = new XpService(bus);
+      service.onModuleInit();
+      controller = new XpController(bus, service);
+    });
+
+    afterEach(() => service.onModuleDestroy());
+
+    it.each(XP_EVENT_SOURCES)('accepts source %s and records it in event metadata', (source) => {
+      controller.publish({
+        eventId: `evt-${source}`,
+        userId: 'user-1',
+        type: source,
+        source,
+      });
+
+      expect(service.getLedger('user-1')[0].metadata).toEqual({ source });
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['unsupported', 'unknown'],
+    ])('rejects a %s event source before publishing', (_description, source) => {
+      const event = {
+        eventId: 'evt-invalid-source',
+        userId: 'user-1',
+        type: 'task.passed',
+        source,
+      } as PublishXpEventDto;
+
+      expect(() => controller.publish(event)).toThrow(BadRequestException);
       expect(service.getBalance('user-1')).toBe(0);
     });
   });

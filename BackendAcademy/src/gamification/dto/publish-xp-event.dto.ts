@@ -18,6 +18,14 @@ export const XP_AWARD_POLICY: Readonly<Record<XpEventType, number>> = {
   'contribution.created': 25,
 };
 
+export const XP_EVENT_SOURCES = [
+  'task.passed',
+  'course.completed',
+  'streak.day',
+  'contribution.created',
+] as const;
+export type XpEventSource = (typeof XP_EVENT_SOURCES)[number];
+
 export const XP_HISTORY_DEFAULT_LIMIT = 20;
 export const XP_HISTORY_MAX_LIMIT = 100;
 
@@ -30,7 +38,10 @@ export class PublishXpEventDto {
   @IsNotEmpty()
   userId: string;
 
-  @IsIn(['task.passed', 'course.completed', 'streak.day', 'contribution.created'])
+  @IsIn(XP_EVENT_SOURCES)
+  source: XpEventSource;
+
+  @IsIn(XP_EVENT_SOURCES)
   type: XpEventType;
 
   @IsOptional()

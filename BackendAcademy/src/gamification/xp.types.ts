@@ -1,8 +1,10 @@
 export type XpEventType =
-  |'task.passed'
+  | 'task.passed'
   |'course.completed'
   |'streak.day'
   |'contribution.created';
+
+export const MAX_XP_BALANCE = Number.MAX_SAFE_INTEGER;
 
 export interface XpEvent {
   eventId: string;
@@ -17,6 +19,11 @@ export interface XpLedgerEntry extends XpEvent {
   points: number;
   /** UTC ISO 8601 timestamp of when the entry was awarded. */
   awardedAt: string;
+}
+
+export interface XpLeaderboardEntry {
+  userId: string;
+  totalXp: number;
 }
 
 export interface XpApplyResult {
