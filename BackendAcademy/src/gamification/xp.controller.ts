@@ -1,5 +1,4 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
 import {
@@ -57,7 +56,7 @@ function decodeCursor(cursor: string | undefined): number {
   return offset;
 }
 
-@Tags('xp')
+@ApiTags('xp')
 @Controller('v1/xp')
 export class XpController {
   constructor(
@@ -72,6 +71,10 @@ export class XpController {
       throw new BadRequestException({
         error: '"source" must be a supported XP event source.',
         code: 'INVALID_XP_EVENT_SOURCE',
+    if (!this.xpService.canPublishFor(event.userId)) {
+      throw new BadRequestException({
+        error: 'Cannot publish an XP event for another learner.',
+        code: 'XP_PUBLISH_LEARNER_SCOPE_VIOLATED',
       });
     }
 

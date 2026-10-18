@@ -23,6 +23,7 @@ describe('XpService', () => {
   });
 
   it('normalizes an event time with a non-UTC offset to UTC', () => {
+  it('applies distinct valid events normally', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
@@ -35,6 +36,15 @@ describe('XpService', () => {
     expect(service.getLedger('user-1')).toHaveLength(2);
     expect(service.getBalance('user-2')).toBe(10);
     expect(service.getLedger('user-2')).toHaveLength(1);
+
+    service.onModuleDestroy();
+  });
+
+  it('normalizes an event time with a non-UTC offset to UTC', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
     bus.publish({
       eventId: 'evt-offset',
       userId: 'user-offset',
@@ -49,6 +59,7 @@ describe('XpService', () => {
   });
 
   it('defaults a missing event time to a UTC timestamp', () => {
+  it('ignores replayed event IDs but still applies new ones', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
@@ -61,6 +72,14 @@ describe('XpService', () => {
     expect(service.getBalance('user-1')).toBe(20);
     expect(service.getLedger('user-1')).toHaveLength(2);
     expect(service.getTotals('user-1').totalXp).toBe(20);
+
+    service.onModuleDestroy();
+  });
+
+  it('defaults a missing event time to a UTC timestamp', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
 
     bus.publish({ eventId: 'evt-default', userId: 'user-default', type: 'task.passed' });
 
@@ -144,6 +163,7 @@ describe('XpService', () => {
     ] as const)('accepts configured award %s = %i XP', (type, amount) => {
       expect(
         controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, source: type, amount }),
+        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }, { user: { id: 'user-1' } }),
       ).toMatchObject({ accepted: true });
       expect(service.getBalance('user-1')).toBe(amount);
     });
@@ -156,8 +176,26 @@ describe('XpService', () => {
     ] as const)('rejects %s', (_description, type, amount) => {
       expect(() =>
         controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, source: type, amount }),
+        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }, { user: { id: 'user-1' } }),
       ).toThrow(BadRequestException);
       expect(service.getBalance('user-1')).toBe(0);
+    });
+
+    it('prevents a learner from publishing an award for another learner', () => {
+      expect(() =>
+        controller.publish(
+          { eventId: 'evt-cross-user', userId: 'user-2', type: 'task.passed' },
+          { user: { id: 'user-1' } },
+        ),
+      ).toThrow(BadRequestException);
+      expect(service.getBalance('user-2')).toBe(0);
+      expect(service.getBalance('user-1')).toBe(0);
+    });
+
+    it('prevents a learner from reading another learner\'s totals', () => {
+      expect(() => controller.getTotals('user-2', { user: { id: 'user-1' } })).toThrow(
+        BadRequestException,
+      );
     });
   });
 
