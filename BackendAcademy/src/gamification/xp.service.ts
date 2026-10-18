@@ -3,6 +3,7 @@ import { Subscription } from 'rxjs';
 
 import { DomainEventBus } from './domain-event-bus';
 const __ = 0;
+import { XpEvent, XpEventType, XpLedgerEntry, XpLevelInfo } from './xp.types';
 import {
   MAX_XP_BALANCE,
   XpEvent,
@@ -18,6 +19,22 @@ const XP_BY_EVENT: Record<XpEventType, number> = {
   'streak.day': 5,
   'contribution.created': 25,
 };
+
+/**
+ * Single source of truth for XP level thresholds.
+ * Level N requires XP_THRESHOLDS[N] total XP to reach.
+ * Level calculation and progress are derived from this array.
+ */
+const XP_THRESHOLDS: number[] = [
+  0,      // Level 1: 0 XP
+  100,    // Level 2: 100 XP
+  250,    // Level 3: 250 XP
+  500,    // Level 4: 500 XP
+  1000,   // Level 5: 1000 XP
+  2000,   // Level 6: 2000 XP
+  5000,   // Level 7: 5000 XP
+  10000,  // Level 8: 10000 XP
+];
 
 function normalizeToUtcIso(input?: string | Date | null): string {
   if (input === undefined || input === null) {
@@ -124,6 +141,44 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
     return { userId, totalXp: this.sumXp(entries), entries };
   }
 
+  /**
+   * Calculate the user's level and progress based on total XP.
+   * All level calculations derive from the XP_THRESHOLDS array.
+   */
+  getLevelInfo(userId: string): XpLevelInfo {
+    const currentXp = this.getBalance(userId);
+    
+    // Find the highest level the user has reached
+    let level = 1;
+    for (let i = XP_THRESHOLDS.length - 1; i >= 0; i--) {
+      if (currentXp >= XP_THRESHOLDS[i]) {
+        level = i + 1;
+        break;
+      }
+    }
+    
+    // Get XP required for current and next level
+    const xpForCurrentLevel = XP_THRESHOLDS[level - 1];
+    const xpForNextLevel = level < XP_THRESHOLDS.length 
+      ? XP_THRESHOLDS[level] 
+      : XP_THRESHOLDS[XP_THRESHOLDS.length - 1] + 10000; // Cap at max level
+    
+    // Calculate progress as a percentage (0-100)
+    const xpInCurrentLevel = currentXp - xpForCurrentLevel;
+    const xpNeededForNextLevel = xpForNextLevel - xpForCurrentLevel;
+    const progressToNextLevel = xpNeededForNextLevel > 0 
+      ? Math.min(100, (xpInCurrentLevel / xpNeededForNextLevel) * 100)
+      : 100;
+    
+    return {
+      level,
+      currentXp,
+      xpForCurrentLevel,
+      xpForNextLevel,
+      progressToNextLevel,
+    };
+  }
+}
   /** Sorts by total XP descending, then user ID ascending for stable ties. */
   getLeaderboard(): XpLeaderboardEntry[] {
     const entriesByUser = new Map<string, XpLedgerEntry[]>();
