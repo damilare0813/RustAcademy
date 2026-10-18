@@ -197,4 +197,132 @@ describe('XpService', () => {
       expect(result.nextCursor).toBeNull();
     });
   });
+
+  describe('XP level calculation from thresholds', () => {
+    let bus: DomainEventBus;
+    let service: XpService;
+
+    beforeEach(() => {
+      bus = new DomainEventBus();
+      service = new XpService(bus);
+      service.onModuleInit();
+    });
+
+    afterEach(() => service.onModuleDestroy());
+
+    function awardXp(userId: string, amount: number) {
+      const eventCount = Math.ceil(amount / 10);
+      for (let i = 0; i < eventCount; i++) {
+        bus.publish({ 
+          eventId: `evt-${userId}-${i}`, 
+          userId, 
+          type: 'task.passed' 
+        });
+      }
+    }
+
+    it('starts at level 1 with 0 XP', () => {
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(1);
+      expect(info.currentXp).toBe(0);
+      expect(info.xpForCurrentLevel).toBe(0);
+      expect(info.xpForNextLevel).toBe(100);
+      expect(info.progressToNextLevel).toBe(0);
+    });
+
+    it('calculates level 1 progress correctly', () => {
+      awardXp('user-1', 5); // 50 XP
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(1);
+      expect(info.currentXp).toBe(50);
+      expect(info.progressToNextLevel).toBe(50);
+    });
+
+    it('reaches level 2 at exactly 100 XP', () => {
+      awardXp('user-1', 10); // 100 XP
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(2);
+      expect(info.currentXp).toBe(100);
+      expect(info.xpForCurrentLevel).toBe(100);
+      expect(info.xpForNextLevel).toBe(250);
+      expect(info.progressToNextLevel).toBe(0);
+    });
+
+    it('calculates level 2 progress correctly', () => {
+      awardXp('user-1', 17); // 170 XP
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(2);
+      expect(info.currentXp).toBe(170);
+      expect(info.xpForCurrentLevel).toBe(100);
+      expect(info.xpForNextLevel).toBe(250);
+      // Progress: (170 - 100) / (250 - 100) = 70 / 150 ≈ 46.67%
+      expect(info.progressToNextLevel).toBeCloseTo(46.67, 1);
+    });
+
+    it('reaches level 3 at exactly 250 XP', () => {
+      awardXp('user-1', 25); // 250 XP
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(3);
+      expect(info.currentXp).toBe(250);
+      expect(info.xpForCurrentLevel).toBe(250);
+      expect(info.xpForNextLevel).toBe(500);
+    });
+
+    it.each([
+      [1, 0, 99, 0, 100],
+      [2, 100, 249, 100, 250],
+      [3, 250, 499, 250, 500],
+      [4, 500, 999, 500, 1000],
+      [5, 1000, 1999, 1000, 2000],
+      [6, 2000, 4999, 2000, 5000],
+      [7, 5000, 9999, 5000, 10000],
+    ] as const)(
+      'level %i boundaries: XP range [%i, %i], thresholds [%i, %i]',
+      (level, minXp, maxXp, currentThreshold, nextThreshold) => {
+        // Test at minimum boundary
+        awardXp('user-min', minXp / 10);
+        const minInfo = service.getLevelInfo('user-min');
+        expect(minInfo.level).toBe(level);
+        expect(minInfo.xpForCurrentLevel).toBe(currentThreshold);
+        expect(minInfo.xpForNextLevel).toBe(nextThreshold);
+        
+        // Test at maximum boundary (just before next level)
+        awardXp('user-max', maxXp / 10);
+        const maxInfo = service.getLevelInfo('user-max');
+        expect(maxInfo.level).toBe(level);
+        expect(maxInfo.xpForCurrentLevel).toBe(currentThreshold);
+        expect(maxInfo.xpForNextLevel).toBe(nextThreshold);
+      },
+    );
+
+    it('reaches max level 8 at 10000 XP', () => {
+      awardXp('user-1', 1000); // 10000 XP
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(8);
+      expect(info.currentXp).toBe(10000);
+      expect(info.xpForCurrentLevel).toBe(10000);
+      expect(info.progressToNextLevel).toBe(0);
+    });
+
+    it('caps progress at 100% when at max level', () => {
+      awardXp('user-1', 1500); // 15000 XP (beyond max level)
+      
+      const info = service.getLevelInfo('user-1');
+      
+      expect(info.level).toBe(8);
+      expect(info.currentXp).toBe(15000);
+      expect(info.progressToNextLevel).toBe(100);
+    });
+  });
 });

@@ -24,3 +24,11 @@ export interface XpApplyResult {
   duplicate: boolean;
   entry?: XpLedgerEntry;
 }
+
+export interface XpLevelInfo {
+  level: number;
+  currentXp: number;
+  xpForCurrentLevel: number;
+  xpForNextLevel: number;
+  progressToNextLevel: number;
+}
