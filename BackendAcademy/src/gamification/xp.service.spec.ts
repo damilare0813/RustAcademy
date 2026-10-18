@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { DomainEventBus } from './domain-event-bus';
 import { XpController, XP_HISTORY_DEFAULT_LIMIT, XP_HISTORY_MAX_LIMIT } from './xp.controller';
-import { XpController } from './xp.controller';
 import { XpService } from './xp.service';
 
 describe('XpService', () => {
@@ -22,7 +21,6 @@ describe('XpService', () => {
   });
 
   it('applies distinct valid events normally', () => {
-  it('normalizes an event time with a non-UTC offset to UTC', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
@@ -35,6 +33,15 @@ describe('XpService', () => {
     expect(service.getLedger('user-1')).toHaveLength(2);
     expect(service.getBalance('user-2')).toBe(10);
     expect(service.getLedger('user-2')).toHaveLength(1);
+
+    service.onModuleDestroy();
+  });
+
+  it('normalizes an event time with a non-UTC offset to UTC', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
     bus.publish({
       eventId: 'evt-offset',
       userId: 'user-offset',
@@ -49,7 +56,6 @@ describe('XpService', () => {
   });
 
   it('ignores replayed event IDs but still applies new ones', () => {
-  it('defaults a missing event time to a UTC timestamp', () => {
     const bus = new DomainEventBus();
     const service = new XpService(bus);
     service.onModuleInit();
@@ -64,6 +70,13 @@ describe('XpService', () => {
     expect(service.getTotals('user-1').totalXp).toBe(20);
 
     service.onModuleDestroy();
+  });
+
+  it('defaults a missing event time to a UTC timestamp', () => {
+    const bus = new DomainEventBus();
+    const service = new XpService(bus);
+    service.onModuleInit();
+
     bus.publish({ eventId: 'evt-default', userId: 'user-default', type: 'task.passed' });
 
     const [award] = service.getLedger('user-default');
@@ -71,6 +84,8 @@ describe('XpService', () => {
     expect(award.occurredAt).toBe(new Date(award.occurredAt).toISOString());
 
     service.onModuleDestroy();
+  });
+
   describe('XP award amount validation', () => {
     let bus: DomainEventBus;
     let service: XpService;
@@ -92,7 +107,7 @@ describe('XpService', () => {
       ['course.completed', 100],
     ] as const)('accepts configured award %s = %i XP', (type, amount) => {
       expect(
-        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }),
+        controller.publish({ eventId: `evt-${type}`, userId: 'user-1', type, amount }, { user: { id: 'user-1' } }),
       ).toMatchObject({ accepted: true });
       expect(service.getBalance('user-1')).toBe(amount);
     });
@@ -104,9 +119,26 @@ describe('XpService', () => {
       ['amount that conflicts with event policy', 'streak.day', 10],
     ] as const)('rejects %s', (_description, type, amount) => {
       expect(() =>
-        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }),
+        controller.publish({ eventId: 'evt-invalid', userId: 'user-1', type, amount }, { user: { id: 'user-1' } }),
       ).toThrow(BadRequestException);
       expect(service.getBalance('user-1')).toBe(0);
+    });
+
+    it('prevents a learner from publishing an award for another learner', () => {
+      expect(() =>
+        controller.publish(
+          { eventId: 'evt-cross-user', userId: 'user-2', type: 'task.passed' },
+          { user: { id: 'user-1' } },
+        ),
+      ).toThrow(BadRequestException);
+      expect(service.getBalance('user-2')).toBe(0);
+      expect(service.getBalance('user-1')).toBe(0);
+    });
+
+    it('prevents a learner from reading another learner\'s totals', () => {
+      expect(() => controller.getTotals('user-2', { user: { id: 'user-1' } })).toThrow(
+        BadRequestException,
+      );
     });
   });
 

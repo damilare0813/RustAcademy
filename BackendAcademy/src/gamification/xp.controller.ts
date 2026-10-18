@@ -1,5 +1,4 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
 import { PublishXpEventDto, XP_AWARD_POLICY } from './dto/publish-xp-event.dto';
@@ -53,7 +52,7 @@ function decodeCursor(cursor: string | undefined): number {
   return offset;
 }
 
-@Tags('xp')
+@ApiTags('xp')
 @Controller('v1/xp')
 export class XpController {
   constructor(
@@ -64,6 +63,13 @@ export class XpController {
   @Post('events')
   @ApiOperation({ summary: 'Publish a domain event for XP awarding' })
   publish(@Body() event: PublishXpEventDto) {
+    if (!this.xpService.canPublishFor(event.userId)) {
+      throw new BadRequestException({
+        error: 'Cannot publish an XP event for another learner.',
+        code: 'XP_PUBLISH_LEARNER_SCOPE_VIOLATED',
+      });
+    }
+
     if (
       event.amount !== undefined &&
       (!Number.isInteger(event.amount) ||
