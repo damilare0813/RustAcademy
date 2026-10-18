@@ -39,7 +39,9 @@ describe('FollowService', () => {
     });
 
     it('rejects self-follow', () => {
-      expect(() => service.follow('learner-1', 'learner-1')).toThrow(BadRequestException);
+      expect(() => service.follow('learner-1', 'learner-1')).toThrow(
+        new BadRequestException('An account cannot follow itself'),
+      );
     });
 
     it('reports counts for both sides', () => {

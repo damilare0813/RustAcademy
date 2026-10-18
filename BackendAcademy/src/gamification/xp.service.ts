@@ -2,6 +2,14 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Subscription } from 'rxjs';
 
 import { DomainEventBus } from './domain-event-bus';
+const __ = 0;
+import {
+  MAX_XP_BALANCE,
+  XpEvent,
+  XpEventType,
+  XpLeaderboardEntry,
+  XpLedgerEntry,
+} from './xp.types';
 import { XpEvent, XpEventType, XpLedgerEntry } from './xp.types';
 
 const XP_BY_EVENT: Record<XpEventType, number> = {
@@ -83,9 +91,18 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
+    const points = XP_BY_EVENT[event.type];
+    if (points === undefined) {
+      throw new RangeError('Unsupported XP event type');
+    }
+    const nextBalance = this.getBalance(event.userId) + points;
+    if (!Number.isSafeInteger(nextBalance) || nextBalance > MAX_XP_BALANCE) {
+      throw new RangeError('XP balance exceeds the maximum safe integer');
+    }
+
     const entry: XpLedgerEntry = {
       ...event,
-      points: XP_BY_EVENT[event.type],
+      points,
       occurredAt: normalizeToUtcIso(event.occurredAt),
       awardedAt: new Date().toISOString(),
     };
@@ -95,7 +112,7 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
   }
 
   getBalance(userId: string): number {
-    return this.getLedger(userId).reduce((total, entry) => total + entry.points, 0);
+    return this.sumXp(this.getLedger(userId));
   }
 
   getLedger(userId: string): XpLedgerEntry[] {
@@ -104,6 +121,38 @@ export class XpService implements OnModuleInit, OnModuleDestroy {
 
   getTotals(userId: string) {
     const entries = this.getLedger(userId);
-    return { userId, totalXp: entries.reduce((total, entry) => total + entry.points, 0), entries };
+    return { userId, totalXp: this.sumXp(entries), entries };
+  }
+
+  /** Sorts by total XP descending, then user ID ascending for stable ties. */
+  getLeaderboard(): XpLeaderboardEntry[] {
+    const entriesByUser = new Map<string, XpLedgerEntry[]>();
+    for (const entry of this.ledger.values()) {
+      const entries = entriesByUser.get(entry.userId) ?? [];
+      entries.push(entry);
+      entriesByUser.set(entry.userId, entries);
+    }
+
+    return [...entriesByUser].map(([userId, entries]) => ({
+      userId,
+      totalXp: this.sumXp(entries),
+    })).sort((a, b) => {
+      if (b.totalXp !== a.totalXp) return b.totalXp - a.totalXp;
+      if (a.userId < b.userId) return -1;
+      if (a.userId > b.userId) return 1;
+      return 0;
+    });
+  }
+
+  private sumXp(entries: readonly XpLedgerEntry[]): number {
+    let total = 0;
+    for (const entry of entries) {
+      const nextTotal = total + entry.points;
+      if (!Number.isSafeInteger(nextTotal) || nextTotal > MAX_XP_BALANCE) {
+        throw new RangeError('XP balance exceeds the maximum safe integer');
+      }
+      total = nextTotal;
+    }
+    return total;
   }
 }

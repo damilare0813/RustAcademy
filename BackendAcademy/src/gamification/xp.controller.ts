@@ -1,7 +1,11 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DomainEventBus } from './domain-event-bus';
-import { PublishXpEventDto, XP_AWARD_POLICY } from './dto/publish-xp-event.dto';
+import {
+  PublishXpEventDto,
+  XP_AWARD_POLICY,
+  XP_EVENT_SOURCES,
+} from './dto/publish-xp-event.dto';
 import { XpService } from './xp.service';
 
 export const XP_HISTORY_DEFAULT_LIMIT = 20;
@@ -63,6 +67,10 @@ export class XpController {
   @Post('events')
   @ApiOperation({ summary: 'Publish a domain event for XP awarding' })
   publish(@Body() event: PublishXpEventDto) {
+    if (!(XP_EVENT_SOURCES as readonly unknown[]).includes(event.source)) {
+      throw new BadRequestException({
+        error: '"source" must be a supported XP event source.',
+        code: 'INVALID_XP_EVENT_SOURCE',
     if (!this.xpService.canPublishFor(event.userId)) {
       throw new BadRequestException({
         error: 'Cannot publish an XP event for another learner.',
@@ -83,7 +91,11 @@ export class XpController {
       });
     }
 
-    this.eventBus.publish(event);
+    const { source, ...xpEvent } = event;
+    this.eventBus.publish({
+      ...xpEvent,
+      metadata: { ...event.metadata, source },
+    });
     return { accepted: true, eventId: event.eventId, totalXp: this.xpService.getBalance(event.userId) };
   }
 
